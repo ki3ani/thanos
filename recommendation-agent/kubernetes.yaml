@@ -1,0 +1,44 @@
+# kubernetes.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommendation-agent
+spec:
+  selector:
+    app: recommendation-agent
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: LoadBalancer 
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendation-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: recommendation-agent
+  template:
+    metadata:
+      labels:
+        app: recommendation-agent
+    spec:
+      containers:
+        - name: server
+          image: us-central1-docker.pkg.dev/kims-boutique-472014/gke-hackathon-repo/recommendation-agent:v9
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gemini-api-key
+                  key: api_key
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi

@@ -1,0 +1,10 @@
+# requirements.txt
+fastapi
+uvicorn
+google-generativeai
+pydantic
+requests
+grpcio
+grpcio-tools
+protobuf==4.25.3
+python-multipart 

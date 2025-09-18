@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #f0f4f8;
+            --card-bg: #ffffff;
+            --primary-text: #2d3748;
+            --secondary-text: #718096;
+            --accent-color: #4299e1;
+            --border-color: #e2e8f0;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--primary-text);
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+        }
+        .container {
+            width: 100%;
+            max-width: 400px;
+        }
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 0.75rem;
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        h1, h2 {
+            margin: 0;
+            padding: 0;
+        }
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+        .subtitle {
+            font-size: 1rem;
+            color: var(--secondary-text);
+            margin-bottom: 1.5rem;
+        }
+        label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            border: 1px solid var(--border-color);
+            box-sizing: border-box;
+            font-size: 1rem;
+            margin-bottom: 1rem;
+        }
+        button {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            border: none;
+            background-color: var(--accent-color);
+            color: white;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #3182ce;
+        }
+        button:disabled {
+            background-color: #a0aec0;
+            cursor: not-allowed;
+        }
+        #recommendation-result {
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+        #recommendation-result.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .product-card {
+            display: flex;
+            align-items: center;
+        }
+        .product-image {
+            width: 80px;
+            height: 80px;
+            border-radius: 0.5rem;
+            margin-right: 1rem;
+            object-fit: cover;
+            background-color: #f7fafc;
+        }
+        .product-info h2 {
+            font-size: 1.125rem;
+            font-weight: 600;
+        }
+        .product-info p {
+            font-size: 0.875rem;
+            color: var(--secondary-text);
+            margin: 0.25rem 0;
+        }
+        .product-info .price {
+            font-weight: 500;
+            color: var(--accent-color);
+        }
+        .status {
+            text-align: center;
+            padding: 1rem;
+            font-style: italic;
+            color: var(--secondary-text);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>Agent Dashboard</h1>
+            <p class="subtitle">Simulate user activity to get an AI recommendation.</p>
+            
+            <label for="viewed-products">Products Viewed (comma-separated)</label>
+            <input type="text" id="viewed-products" value="Sunglasses, Watch">
+            
+            <button id="get-rec-button">Get Recommendation</button>
+        </div>
+
+        <div id="recommendation-output" class="card" style="display: none;">
+             <!-- Results will be injected here by JavaScript -->
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        // IMPORTANT: Replace this with your agent's external IP address
+        const AGENT_API_ENDPOINT = "http://34.123.191.92:8080/recommend";
+        // ---------------------
+
+        const getRecButton = document.getElementById('get-rec-button');
+        const viewedProductsInput = document.getElementById('viewed-products');
+        const recommendationOutput = document.getElementById('recommendation-output');
+
+        getRecButton.addEventListener('click', async () => {
+            const productsValue = viewedProductsInput.value;
+            if (!productsValue.trim()) {
+                alert("Please enter at least one product.");
+                return;
+            }
+
+            // Clean up the input string and convert to an array
+            const viewedProducts = productsValue.split(',').map(p => p.trim()).filter(p => p);
+
+            // Disable button and show loading state
+            getRecButton.disabled = true;
+            getRecButton.textContent = 'Thinking...';
+            recommendationOutput.style.display = 'block';
+            recommendationOutput.innerHTML = `<div class="status">Asking the AI agent...</div>`;
+
+            try {
+                const response = await fetch(AGENT_API_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: `session_${Date.now()}`,
+                        viewed_products: viewedProducts
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || `HTTP error! Status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayRecommendation(data.recommended_product);
+
+            } catch (error) {
+                console.error('Error fetching recommendation:', error);
+                recommendationOutput.innerHTML = `<div class="status" style="color: #e53e3e;">Error: ${error.message}</div>`;
+            } finally {
+                // Re-enable button
+                getRecButton.disabled = false;
+                getRecButton.textContent = 'Get Recommendation';
+            }
+        });
+
+        function displayRecommendation(product) {
+            const price = (product.priceUsd.units || 0) + (product.priceUsd.nanos || 0) / 1e9;
+            const formattedPrice = price.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+            
+            recommendationOutput.innerHTML = `
+                <div id="recommendation-result">
+                    <p class="subtitle" style="margin-bottom: 1rem;">The agent recommends:</p>
+                    <div class="product-card">
+                        <img src="/static/img/products/watch.jpg" alt="${product.name}" class="product-image" onerror="this.onerror=null;this.src='https://placehold.co/80x80/e2e8f0/2d3748?text=Image';">
+                        <div class="product-info">
+                            <h2>${product.name}</h2>
+                            <p>${product.description}</p>
+                            <p class="price">${formattedPrice}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            // Note: The image URL is hardcoded for the demo as we can't access the backend's static assets directly.
+            
+            // Trigger fade-in animation
+            setTimeout(() => {
+                document.getElementById('recommendation-result').classList.add('visible');
+            }, 10);
+        }
+    </script>
+</body>
+</html>
