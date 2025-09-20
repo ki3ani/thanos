@@ -57,7 +57,6 @@ except ImportError:
         """Test that shows import issues"""
         pytest.skip("Could not import main module")
 
-
 except Exception:
 
     def test_configuration_error():
