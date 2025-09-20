@@ -138,15 +138,11 @@
         </div>
 
         <div id="recommendation-output" class="card" style="display: none;">
-             <!-- Results will be injected here by JavaScript -->
         </div>
     </div>
 
     <script>
-        // --- CONFIGURATION ---
-        // IMPORTANT: Replace this with your agent's external IP address
         const AGENT_API_ENDPOINT = "http://34.123.191.92:8080/recommend";
-        // ---------------------
 
         const getRecButton = document.getElementById('get-rec-button');
         const viewedProductsInput = document.getElementById('viewed-products');
@@ -159,10 +155,8 @@
                 return;
             }
 
-            // Clean up the input string and convert to an array
             const viewedProducts = productsValue.split(',').map(p => p.trim()).filter(p => p);
 
-            // Disable button and show loading state
             getRecButton.disabled = true;
             getRecButton.textContent = 'Thinking...';
             recommendationOutput.style.display = 'block';
@@ -192,7 +186,6 @@
                 console.error('Error fetching recommendation:', error);
                 recommendationOutput.innerHTML = `<div class="status" style="color: #e53e3e;">Error: ${error.message}</div>`;
             } finally {
-                // Re-enable button
                 getRecButton.disabled = false;
                 getRecButton.textContent = 'Get Recommendation';
             }
@@ -215,9 +208,7 @@
                     </div>
                 </div>
             `;
-            // Note: The image URL is hardcoded for the demo as we can't access the backend's static assets directly.
             
-            // Trigger fade-in animation
             setTimeout(() => {
                 document.getElementById('recommendation-result').classList.add('visible');
             }, 10);
