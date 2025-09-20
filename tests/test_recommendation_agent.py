@@ -7,32 +7,56 @@ from fastapi import HTTPException
 import sys
 import os
 
+# Ensure clean imports by clearing any cached modules
+for module_name in list(sys.modules.keys()):
+    if module_name == 'main':
+        del sys.modules[module_name]
+
 # Add the recommendation-agent directory to the path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'recommendation-agent'))
+rec_agent_path = os.path.join(os.path.dirname(__file__), '..', 'recommendation-agent')
+if rec_agent_path not in sys.path:
+    sys.path.insert(0, rec_agent_path)
 
 
-@pytest.fixture(autouse=True)
-def setup_mocks():
-    """Set up mocks for external dependencies before importing main."""
+@pytest.fixture(scope="function")
+def mock_env_and_deps():
+    """Set up mocks for external dependencies."""
     with patch.dict(os.environ, {'GEMINI_API_KEY': 'test-key'}):
-        with patch('google.generativeai.configure'):
-            with patch('google.generativeai.GenerativeModel') as mock_model:
-                # Import main after mocking
-                import main
-                
-                # Set up the mock model instance
-                mock_model_instance = Mock()
-                mock_model.return_value = mock_model_instance
-                main.model = mock_model_instance
-                
-                yield main
+        with patch('google.generativeai.configure') as mock_configure:
+            with patch('google.generativeai.GenerativeModel') as mock_model_class:
+                with patch('pb.demo_pb2_grpc') as mock_grpc:
+                    with patch('pb.demo_pb2') as mock_pb2:
+                        # Set up mock model instance
+                        mock_model_instance = Mock()
+                        mock_model_class.return_value = mock_model_instance
+                        
+                        yield {
+                            'model_instance': mock_model_instance,
+                            'model_class': mock_model_class,
+                            'configure': mock_configure,
+                            'grpc': mock_grpc,
+                            'pb2': mock_pb2
+                        }
 
 
 @pytest.fixture
-def client(setup_mocks):
+def recommendation_main(mock_env_and_deps):
+    """Import and return the recommendation main module with mocked dependencies."""
+    # Force reimport of main module
+    import importlib
+    import main as rec_main
+    importlib.reload(rec_main)
+    
+    # Inject the mock model instance
+    rec_main.model = mock_env_and_deps['model_instance']
+    
+    return rec_main
+
+
+@pytest.fixture
+def client(recommendation_main):
     """Create a test client for the FastAPI app."""
-    main = setup_mocks
-    return TestClient(main.app)
+    return TestClient(recommendation_main.app)
 
 
 @pytest.fixture
@@ -92,7 +116,7 @@ class TestRecommendationEndpoint:
     """Test the recommendation endpoint."""
     
     @pytest.mark.unit
-    def test_recommend_requires_viewed_products(self, client, setup_mocks):
+    def test_recommend_requires_viewed_products(self, client):
         """Test that recommendation endpoint requires viewed products."""
         response = client.post("/recommend", json={
             "session_id": "test-session",
@@ -102,11 +126,10 @@ class TestRecommendationEndpoint:
         assert "Viewed products list cannot be empty" in response.json()["detail"]
     
     @pytest.mark.unit
-    def test_recommend_requires_product_catalog(self, client, setup_mocks):
+    def test_recommend_requires_product_catalog(self, client, recommendation_main):
         """Test that recommendation endpoint requires product catalog."""
-        main = setup_mocks
         # Clear the product catalog
-        main.VALID_PRODUCT_NAMES.clear()
+        recommendation_main.VALID_PRODUCT_NAMES.clear()
         
         response = client.post("/recommend", json={
             "session_id": "test-session",
@@ -116,69 +139,64 @@ class TestRecommendationEndpoint:
         assert "Product catalog not available" in response.json()["detail"]
     
     @pytest.mark.unit
-    @patch('main.get_product_from_catalog')
-    def test_recommend_success(self, mock_get_product, client, setup_mocks, sample_product):
+    def test_recommend_success(self, client, recommendation_main, sample_product, mock_env_and_deps):
         """Test successful recommendation flow."""
-        main = setup_mocks
         # Setup mocks
-        main.VALID_PRODUCT_NAMES.clear()
-        main.VALID_PRODUCT_NAMES.extend(["Product A", "Product B", "Test Product"])
+        recommendation_main.VALID_PRODUCT_NAMES.clear()
+        recommendation_main.VALID_PRODUCT_NAMES.extend(["Product A", "Product B", "Test Product"])
         
         mock_response = Mock()
         mock_response.text = "Test Product"
-        main.model.generate_content.return_value = mock_response
-        mock_get_product.return_value = sample_product
+        mock_env_and_deps['model_instance'].generate_content.return_value = mock_response
         
-        response = client.post("/recommend", json={
-            "session_id": "test-session",
-            "viewed_products": ["Product A"]
-        })
+        with patch.object(recommendation_main, 'get_product_from_catalog', return_value=sample_product):
+            response = client.post("/recommend", json={
+                "session_id": "test-session",
+                "viewed_products": ["Product A"]
+            })
         
         assert response.status_code == 200
         assert response.json() == {"recommended_product": sample_product}
         
         # Verify the prompt was constructed correctly
-        main.model.generate_content.assert_called_once()
-        prompt_arg = main.model.generate_content.call_args[0][0]
+        mock_env_and_deps['model_instance'].generate_content.assert_called_once()
+        prompt_arg = mock_env_and_deps['model_instance'].generate_content.call_args[0][0]
         assert "Product A" in prompt_arg
         assert "Test Product" in prompt_arg
         
         # Clean up
-        main.VALID_PRODUCT_NAMES.clear()
+        recommendation_main.VALID_PRODUCT_NAMES.clear()
     
     @pytest.mark.unit
-    @patch('main.get_product_from_catalog')
-    def test_recommend_product_not_found(self, mock_get_product, client, setup_mocks):
+    def test_recommend_product_not_found(self, client, recommendation_main, mock_env_and_deps):
         """Test recommendation when product is not found in catalog."""
-        main = setup_mocks
         # Setup mocks
-        main.VALID_PRODUCT_NAMES.clear()
-        main.VALID_PRODUCT_NAMES.extend(["Product A", "Product B"])
+        recommendation_main.VALID_PRODUCT_NAMES.clear()
+        recommendation_main.VALID_PRODUCT_NAMES.extend(["Product A", "Product B"])
         
         mock_response = Mock()
         mock_response.text = "Unknown Product"
-        main.model.generate_content.return_value = mock_response
-        mock_get_product.return_value = None
+        mock_env_and_deps['model_instance'].generate_content.return_value = mock_response
         
-        response = client.post("/recommend", json={
-            "session_id": "test-session",
-            "viewed_products": ["Product A"]
-        })
+        with patch.object(recommendation_main, 'get_product_from_catalog', return_value=None):
+            response = client.post("/recommend", json={
+                "session_id": "test-session",
+                "viewed_products": ["Product A"]
+            })
         
         assert response.status_code == 404
         assert "not found in catalog" in response.json()["detail"]
         
         # Clean up
-        main.VALID_PRODUCT_NAMES.clear()
+        recommendation_main.VALID_PRODUCT_NAMES.clear()
     
     @pytest.mark.unit
-    def test_recommend_gemini_api_error(self, client, setup_mocks):
+    def test_recommend_gemini_api_error(self, client, recommendation_main, mock_env_and_deps):
         """Test recommendation when Gemini API fails."""
-        main = setup_mocks
         # Setup mocks
-        main.VALID_PRODUCT_NAMES.clear()
-        main.VALID_PRODUCT_NAMES.extend(["Product A", "Product B"])
-        main.model.generate_content.side_effect = Exception("API Error")
+        recommendation_main.VALID_PRODUCT_NAMES.clear()
+        recommendation_main.VALID_PRODUCT_NAMES.extend(["Product A", "Product B"])
+        mock_env_and_deps['model_instance'].generate_content.side_effect = Exception("API Error")
         
         response = client.post("/recommend", json={
             "session_id": "test-session",
@@ -189,28 +207,26 @@ class TestRecommendationEndpoint:
         assert "Failed to get recommendation" in response.json()["detail"]
         
         # Clean up
-        main.VALID_PRODUCT_NAMES.clear()
+        recommendation_main.VALID_PRODUCT_NAMES.clear()
 
 
 class TestProductCatalogIntegration:
     """Test product catalog gRPC integration."""
     
     @pytest.mark.unit
-    @patch('pb.demo_pb2_grpc.ProductCatalogServiceStub')
-    @patch('grpc.insecure_channel')
-    def test_get_product_from_catalog_success(self, mock_channel, mock_stub_class, setup_mocks, sample_grpc_product):
+    def test_get_product_from_catalog_success(self, recommendation_main, sample_grpc_product, mock_env_and_deps):
         """Test successful product retrieval from catalog."""
-        main = setup_mocks
         # Setup mocks
         mock_stub = Mock()
-        mock_stub_class.return_value = mock_stub
+        mock_env_and_deps['grpc'].ProductCatalogServiceStub.return_value = mock_stub
         
         mock_response = Mock()
         mock_response.results = [sample_grpc_product]
         mock_stub.SearchProducts.return_value = mock_response
         
-        # Call the function
-        result = main.get_product_from_catalog("Test Product")
+        with patch('grpc.insecure_channel'):
+            # Call the function
+            result = recommendation_main.get_product_from_catalog("Test Product")
         
         # Assertions
         assert result is not None
@@ -223,38 +239,34 @@ class TestProductCatalogIntegration:
         assert result["priceUsd"]["nanos"] == 500000000
     
     @pytest.mark.unit
-    @patch('pb.demo_pb2_grpc.ProductCatalogServiceStub')
-    @patch('grpc.insecure_channel')
-    def test_get_product_from_catalog_not_found(self, mock_channel, mock_stub_class, setup_mocks):
+    def test_get_product_from_catalog_not_found(self, recommendation_main, mock_env_and_deps):
         """Test product not found in catalog."""
-        main = setup_mocks
         # Setup mocks
         mock_stub = Mock()
-        mock_stub_class.return_value = mock_stub
+        mock_env_and_deps['grpc'].ProductCatalogServiceStub.return_value = mock_stub
         
         mock_response = Mock()
         mock_response.results = []
         mock_stub.SearchProducts.return_value = mock_response
         
-        # Call the function
-        result = main.get_product_from_catalog("Non-existent Product")
+        with patch('grpc.insecure_channel'):
+            # Call the function
+            result = recommendation_main.get_product_from_catalog("Non-existent Product")
         
         # Assertions
         assert result is None
     
     @pytest.mark.unit
-    @patch('pb.demo_pb2_grpc.ProductCatalogServiceStub')
-    @patch('grpc.insecure_channel')
-    def test_get_product_from_catalog_grpc_error(self, mock_channel, mock_stub_class, setup_mocks):
+    def test_get_product_from_catalog_grpc_error(self, recommendation_main, mock_env_and_deps):
         """Test gRPC error handling in product retrieval."""
-        main = setup_mocks
         # Setup mocks
         mock_stub = Mock()
-        mock_stub_class.return_value = mock_stub
+        mock_env_and_deps['grpc'].ProductCatalogServiceStub.return_value = mock_stub
         mock_stub.SearchProducts.side_effect = Exception("gRPC Error")
         
-        # Call the function
-        result = main.get_product_from_catalog("Test Product")
+        with patch('grpc.insecure_channel'):
+            # Call the function
+            result = recommendation_main.get_product_from_catalog("Test Product")
         
         # Assertions
         assert result is None
@@ -264,14 +276,11 @@ class TestProductCatalogSync:
     """Test product catalog synchronization on startup."""
     
     @pytest.mark.unit
-    @patch('pb.demo_pb2_grpc.ProductCatalogServiceStub')
-    @patch('grpc.insecure_channel')
-    def test_sync_product_catalog_success(self, mock_channel, mock_stub_class, setup_mocks):
+    def test_sync_product_catalog_success(self, recommendation_main, mock_env_and_deps):
         """Test successful product catalog sync."""
-        main = setup_mocks
         # Setup mocks
         mock_stub = Mock()
-        mock_stub_class.return_value = mock_stub
+        mock_env_and_deps['grpc'].ProductCatalogServiceStub.return_value = mock_stub
         
         mock_product1 = Mock()
         mock_product1.name = "Product A"
@@ -282,56 +291,53 @@ class TestProductCatalogSync:
         mock_response.products = [mock_product1, mock_product2]
         mock_stub.ListProducts.return_value = mock_response
         
-        # Clear and call the function
-        main.VALID_PRODUCT_NAMES.clear()
-        main.sync_product_catalog()
+        with patch('grpc.insecure_channel'):
+            # Clear and call the function
+            recommendation_main.VALID_PRODUCT_NAMES.clear()
+            recommendation_main.sync_product_catalog()
         
         # Assertions
-        assert "Product A" in main.VALID_PRODUCT_NAMES
-        assert "Product B" in main.VALID_PRODUCT_NAMES
-        assert len(main.VALID_PRODUCT_NAMES) == 2
+        assert "Product A" in recommendation_main.VALID_PRODUCT_NAMES
+        assert "Product B" in recommendation_main.VALID_PRODUCT_NAMES
+        assert len(recommendation_main.VALID_PRODUCT_NAMES) == 2
     
     @pytest.mark.unit
-    @patch('pb.demo_pb2_grpc.ProductCatalogServiceStub')
-    @patch('grpc.insecure_channel')
-    def test_sync_product_catalog_grpc_error(self, mock_channel, mock_stub_class, setup_mocks):
+    def test_sync_product_catalog_grpc_error(self, recommendation_main, mock_env_and_deps):
         """Test gRPC error handling in catalog sync."""
-        main = setup_mocks
         # Setup mocks
         mock_stub = Mock()
-        mock_stub_class.return_value = mock_stub
+        mock_env_and_deps['grpc'].ProductCatalogServiceStub.return_value = mock_stub
         mock_stub.ListProducts.side_effect = Exception("gRPC Connection Error")
         
-        # Clear and call the function
-        main.VALID_PRODUCT_NAMES.clear()
-        main.sync_product_catalog()
+        with patch('grpc.insecure_channel'):
+            # Clear and call the function
+            recommendation_main.VALID_PRODUCT_NAMES.clear()
+            recommendation_main.sync_product_catalog()
         
         # Should not crash and VALID_PRODUCT_NAMES should remain empty
-        assert len(main.VALID_PRODUCT_NAMES) == 0
+        assert len(recommendation_main.VALID_PRODUCT_NAMES) == 0
 
 
 class TestRecommendRequestModel:
     """Test the RecommendRequest Pydantic model."""
     
     @pytest.mark.unit
-    def test_recommend_request_valid_data(self, setup_mocks):
+    def test_recommend_request_valid_data(self, recommendation_main):
         """Test valid RecommendRequest creation."""
-        main = setup_mocks
         request_data = {
             "session_id": "test-session-123",
             "viewed_products": ["Product A", "Product B"]
         }
-        request = main.RecommendRequest(**request_data)
+        request = recommendation_main.RecommendRequest(**request_data)
         
         assert request.session_id == "test-session-123"
         assert request.viewed_products == ["Product A", "Product B"]
     
     @pytest.mark.unit
-    def test_recommend_request_missing_fields(self, setup_mocks):
+    def test_recommend_request_missing_fields(self, recommendation_main):
         """Test RecommendRequest with missing fields."""
-        main = setup_mocks
         with pytest.raises(Exception):  # Pydantic validation error
-            main.RecommendRequest(session_id="test-session")
+            recommendation_main.RecommendRequest(session_id="test-session")
         
         with pytest.raises(Exception):  # Pydantic validation error
-            main.RecommendRequest(viewed_products=["Product A"])
+            recommendation_main.RecommendRequest(viewed_products=["Product A"])

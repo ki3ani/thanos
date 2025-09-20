@@ -1,9 +1,9 @@
 """Tests for the frontend proxy service."""
 
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
-import json
+import responses
 import sys
 import os
 
@@ -400,8 +400,7 @@ class TestResponseHandling:
     """Test response handling and forwarding."""
     
     @pytest.mark.unit
-    @patch('main.requests')
-    def test_response_headers_forwarded(self, mock_requests_module, client):
+    def test_response_headers_forwarded(self, client, mock_requests):
         """Test that response headers are forwarded correctly."""
         # Setup mock response with custom headers
         mock_response = Mock()
@@ -412,7 +411,7 @@ class TestResponseHandling:
             'Cache-Control': 'no-cache',
             'Custom-Header': 'custom-value'
         }
-        mock_requests_module.request.return_value = mock_response
+        mock_requests.request.return_value = mock_response
         
         # Make request
         response = client.get("/test")
@@ -424,15 +423,14 @@ class TestResponseHandling:
         assert response.headers['Custom-Header'] == 'custom-value'
     
     @pytest.mark.unit
-    @patch('main.requests')
-    def test_response_redirects_not_followed(self, mock_requests_module, client):
+    def test_response_redirects_not_followed(self, client, mock_requests):
         """Test that redirects are not automatically followed."""
         # Setup mock response with redirect
         mock_response = Mock()
         mock_response.content = b''
         mock_response.status_code = 302
         mock_response.headers = {'Location': 'http://example.com/redirect'}
-        mock_requests_module.request.return_value = mock_response
+        mock_requests.request.return_value = mock_response
         
         # Make request
         response = client.get("/test")
@@ -441,5 +439,5 @@ class TestResponseHandling:
         assert response.status_code == 302
         
         # Verify allow_redirects=False was used
-        call_args = mock_requests_module.request.call_args
+        call_args = mock_requests.request.call_args
         assert call_args[1]['allow_redirects'] is False
