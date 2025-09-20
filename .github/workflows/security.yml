@@ -1,0 +1,138 @@
+name: Dependency and Security Updates
+
+on:
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+jobs:
+  # Update Python dependencies
+  update-python-deps:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [frontend-proxy, recommendation-agent]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install pip-tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-tools
+      
+      - name: Update requirements.txt
+        run: |
+          cd ${{ matrix.service }}
+          # Create requirements.in if it doesn't exist
+          if [ ! -f requirements.in ]; then
+            cp requirements.txt requirements.in
+          fi
+          
+          # Update dependencies
+          pip-compile --upgrade requirements.in
+      
+      - name: Check for vulnerabilities with safety
+        run: |
+          pip install safety
+          cd ${{ matrix.service }}
+          safety check -r requirements.txt || echo "Vulnerabilities found, check output"
+      
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update ${{ matrix.service }} dependencies"
+          title: "Update ${{ matrix.service }} dependencies"
+          body: |
+            Automated dependency update for ${{ matrix.service }}
+            
+            - Updated requirements.txt with latest compatible versions
+            - Security vulnerabilities check completed
+            
+            Please review the changes and test before merging.
+          branch: update-deps-${{ matrix.service }}
+          delete-branch: true
+
+  # Security audit
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run comprehensive security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'json'
+          output: 'security-results.json'
+      
+      - name: Parse security results
+        run: |
+          if [ -f security-results.json ]; then
+            # Count vulnerabilities by severity
+            HIGH_VULNS=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' security-results.json)
+            CRITICAL_VULNS=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' security-results.json)
+            
+            echo "Critical vulnerabilities: $CRITICAL_VULNS"
+            echo "High vulnerabilities: $HIGH_VULNS"
+            
+            # Create issue if critical vulnerabilities found
+            if [ "$CRITICAL_VULNS" -gt 0 ]; then
+              echo "CRITICAL_FOUND=true" >> $GITHUB_ENV
+            fi
+          fi
+      
+      - name: Create security issue
+        if: env.CRITICAL_FOUND == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Critical Security Vulnerabilities Detected',
+              body: `Critical security vulnerabilities have been detected in the repository.
+              
+              Please review the security scan results and address the issues immediately.
+              
+              The scan results are available in the workflow run: ${context.payload.repository.html_url}/actions/runs/${context.runId}`,
+              labels: ['security', 'critical', 'bug']
+            })
+
+  # Docker image scanning
+  scan-docker-images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [frontend-proxy, recommendation-agent, mcp-toolbox]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build Docker image for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          tags: local/${{ matrix.service }}:scan
+          load: true
+      
+      - name: Scan Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: local/${{ matrix.service }}:scan
+          format: 'json'
+          output: '${{ matrix.service }}-scan.json'
+      
+      - name: Upload scan results
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-scans
+          path: '${{ matrix.service }}-scan.json'
