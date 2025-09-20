@@ -4,7 +4,9 @@ uvicorn
 google-generativeai
 pydantic
 requests
-grpcio
-grpcio-tools
-protobuf==4.25.3
-python-multipart 
+# The gRPC libraries are no longer needed directly by the agent
+# grpcio
+# grpcio-tools
+# protobuf==4.25.3
+python-multipart
+toolbox-core
