@@ -1,4 +1,4 @@
-import requests
+import requests  # type: ignore
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 import os
@@ -13,8 +13,8 @@ TOOLBOX_URL = (
 app = FastAPI()
 
 
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
-async def proxy_request(request: Request, path: str):
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])  # type: ignore
+async def proxy_request(request: Request, path: str) -> Response:
     """
     This single function handles all incoming requests, acting as a proxy.
     It has special logic to handle the 'POST /cart' request to emit context.

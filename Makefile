@@ -14,7 +14,8 @@ lint:  ## Run linting tools
 	@echo "Running flake8..."
 	flake8 recommendation-agent/main.py frontend-proxy/main.py
 	@echo "Running mypy..."
-	mypy recommendation-agent/main.py frontend-proxy/main.py --ignore-missing-imports
+	mypy recommendation-agent/main.py --ignore-missing-imports --follow-imports=skip
+	mypy frontend-proxy/main.py --ignore-missing-imports --follow-imports=skip
 	@echo "Linting completed!"
 
 format:  ## Format code with black

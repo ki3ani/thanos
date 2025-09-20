@@ -10,19 +10,20 @@ import os
 # Add the frontend-proxy directory to the path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'frontend-proxy'))
 
+# Import the frontend-proxy main module explicitly
 import main
 
 
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI app."""
-    return TestClient(main.app)
+    return TestClient(main.app, follow_redirects=False)
 
 
 @pytest.fixture
 def mock_requests():
     """Mock the requests module."""
-    with patch('main.requests') as mock:
+    with patch.object(main, 'requests') as mock:
         yield mock
 
 

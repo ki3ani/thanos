@@ -73,7 +73,7 @@ class TestRecommendationAgentBasics:
     def test_successful_recommendation(self):
         """Test successful recommendation flow."""
         # Set up test data
-        rec_main.VALID_PRODUCT_NAMES.extend(["Product A", "Product B", "Recommended Product"])
+        rec_main.VALID_PRODUCT_NAMES.update(["Product A", "Product B", "Recommended Product"])
         
         # Mock Gemini response
         mock_response = Mock()
@@ -107,7 +107,7 @@ class TestRecommendationAgentBasics:
 
     def test_product_not_found_in_catalog(self):
         """Test when recommended product is not found in catalog."""
-        rec_main.VALID_PRODUCT_NAMES.extend(["Product A", "Product B"])
+        rec_main.VALID_PRODUCT_NAMES.update(["Product A", "Product B"])
         
         # Mock Gemini response
         mock_response = Mock()
@@ -122,13 +122,12 @@ class TestRecommendationAgentBasics:
                 "viewed_products": ["Product A"]
             })
             
-            # Due to the broad exception handling, this becomes a 500 error
-            assert response.status_code == 500
-            assert "Failed to get recommendation" in response.json()["detail"]
+            # Should return 404 when product is not found
+            assert response.status_code == 404
 
     def test_gemini_api_error(self):
         """Test when Gemini API fails."""
-        rec_main.VALID_PRODUCT_NAMES.extend(["Product A", "Product B"])
+        rec_main.VALID_PRODUCT_NAMES.update(["Product A", "Product B"])
         
         # Mock Gemini to raise an exception
         rec_main.model.generate_content.side_effect = Exception("API Error")

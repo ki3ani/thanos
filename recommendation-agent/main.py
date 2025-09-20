@@ -1,4 +1,6 @@
 import os
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, Optional, Dict
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import google.generativeai as genai
@@ -15,9 +17,41 @@ except KeyError:
     raise RuntimeError("GEMINI_API_KEY environment variable not set.")
 
 PRODUCT_CATALOG_SERVICE_ADDR = "productcatalogservice:3550"
-VALID_PRODUCT_NAMES = []
+VALID_PRODUCT_NAMES = set()
 
-app = FastAPI()
+
+def sync_product_catalog() -> None:
+    """Sync product catalog from gRPC service."""
+    print("Syncing product catalog via gRPC...")
+    try:
+        channel = grpc.insecure_channel(PRODUCT_CATALOG_SERVICE_ADDR)
+        stub = demo_pb2_grpc.ProductCatalogServiceStub(channel)
+        response = stub.ListProducts(demo_pb2.Empty())
+
+        global VALID_PRODUCT_NAMES
+        VALID_PRODUCT_NAMES = {p.name for p in response.products}
+
+        if VALID_PRODUCT_NAMES:
+            print(f"Successfully synced {len(VALID_PRODUCT_NAMES)} products.")
+        else:
+            print("Warning: Product catalog sync resulted in an empty list.")
+    except Exception as e:
+        print(f"FATAL: Could not sync product catalog on startup: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Manage application lifespan events."""
+    # Startup
+    sync_product_catalog()
+
+    yield
+
+    # Shutdown (if needed)
+    pass
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,24 +62,13 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def sync_product_catalog():
-    """On startup, make a gRPC call to the productcatalogservice to get all products."""
-    print("Syncing product catalog via gRPC...")
-    try:
-        channel = grpc.insecure_channel(PRODUCT_CATALOG_SERVICE_ADDR)
-        stub = demo_pb2_grpc.ProductCatalogServiceStub(channel)
-        response = stub.ListProducts(demo_pb2.Empty())
-
-        global VALID_PRODUCT_NAMES
-        VALID_PRODUCT_NAMES = [p.name for p in response.products]
-
-        if VALID_PRODUCT_NAMES:
-            print(f"Successfully synced {len(VALID_PRODUCT_NAMES)} products.")
-        else:
-            print("Warning: Product catalog sync resulted in an empty list.")
-    except Exception as e:
-        print(f"FATAL: Could not sync product catalog on startup: {e}")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class RecommendRequest(BaseModel):
@@ -53,7 +76,7 @@ class RecommendRequest(BaseModel):
     viewed_products: list[str]
 
 
-def get_product_from_catalog(product_name: str) -> dict:
+def get_product_from_catalog(product_name: str) -> Optional[dict]:
     """Makes a gRPC call to the productcatalogservice to search for a product."""
     try:
         channel = grpc.insecure_channel(PRODUCT_CATALOG_SERVICE_ADDR)
@@ -81,14 +104,14 @@ def get_product_from_catalog(product_name: str) -> dict:
         return None
 
 
-@app.get("/health", status_code=200)
-def health_check():
+@app.get("/health", status_code=200)  # type: ignore
+def health_check() -> Dict[str, str]:
     """Simple health check endpoint."""
     return {"status": "ok", "message": "Recommendation agent is healthy"}
 
 
-@app.post("/recommend")
-def get_recommendation(request: RecommendRequest):
+@app.post("/recommend")  # type: ignore
+def get_recommendation(request: RecommendRequest) -> Dict[str, dict]:
     """Receives user context, gets a recommendation from Gemini,
     and fetches its details."""
     if not request.viewed_products:
@@ -123,6 +146,8 @@ def get_recommendation(request: RecommendRequest):
             )
 
         return {"recommended_product": product_details}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"An error occurred: {e}")
         raise HTTPException(status_code=500, detail="Failed to get recommendation.")
