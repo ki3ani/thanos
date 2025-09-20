@@ -1,0 +1,44 @@
+# This service definition creates a "virtual" frontend that points to our proxy.
+# The loadgenerator will talk to this, not knowing it's being intercepted.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend-proxy 
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend-proxy
+  template:
+    metadata:
+      labels:
+        app: frontend-proxy
+    spec:
+      containers:
+      - name: server
+        image: us-central1-docker.pkg.dev/kims-boutique-472014/gke-hackathon-repo/frontend-proxy:v5
+        ports:
+        - containerPort: 8080
+        env:
+        - name: TOOLBOX_SERVICE_HOST
+          value: "mcp-toolbox-service" 
+        - name: TOOLBOX_SERVICE_PORT
+          value: "8080"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
