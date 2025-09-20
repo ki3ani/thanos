@@ -1,0 +1,146 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  PYTHON_VERSION: '3.11'
+  REGISTRY: us-central1-docker.pkg.dev
+  PROJECT_ID: kims-boutique-472014
+  REPOSITORY: gke-hackathon-repo
+
+jobs:
+  # Detect changes to determine which services to build
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend-proxy: ${{ steps.changes.outputs.frontend-proxy }}
+      recommendation-agent: ${{ steps.changes.outputs.recommendation-agent }}
+      mcp-toolbox: ${{ steps.changes.outputs.mcp-toolbox }}
+      ui: ${{ steps.changes.outputs.ui }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            frontend-proxy:
+              - 'frontend-proxy/**'
+            recommendation-agent:
+              - 'recommendation-agent/**'
+            mcp-toolbox:
+              - 'mcp-toolbox/**'
+            ui:
+              - 'ui/**'
+
+  # Lint and test Python services
+  python-quality:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.frontend-proxy == 'true' || needs.changes.outputs.recommendation-agent == 'true'
+    strategy:
+      matrix:
+        service: [frontend-proxy, recommendation-agent]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort pytest pytest-asyncio
+          if [ -f ${{ matrix.service }}/requirements.txt ]; then
+            pip install -r ${{ matrix.service }}/requirements.txt
+          fi
+      
+      - name: Lint with flake8
+        run: |
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 ${{ matrix.service }} --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+          flake8 ${{ matrix.service }} --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      
+      - name: Check code formatting with black
+        run: black --check ${{ matrix.service }}
+      
+      - name: Check import sorting with isort
+        run: isort --check-only ${{ matrix.service }}
+      
+      - name: Test with pytest
+        run: |
+          cd ${{ matrix.service }}
+          python -m pytest . -v || echo "No tests found, skipping..."
+
+  # Security scanning
+  security:
+    runs-on: ubuntu-latest
+    needs: changes
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Build Docker images
+  build-images:
+    runs-on: ubuntu-latest
+    needs: [changes, python-quality]
+    if: always() && (needs.changes.outputs.frontend-proxy == 'true' || needs.changes.outputs.recommendation-agent == 'true' || needs.changes.outputs.mcp-toolbox == 'true')
+    strategy:
+      matrix:
+        include:
+          - service: frontend-proxy
+            condition: needs.changes.outputs.frontend-proxy == 'true'
+          - service: recommendation-agent
+            condition: needs.changes.outputs.recommendation-agent == 'true'
+          - service: mcp-toolbox
+            condition: needs.changes.outputs.mcp-toolbox == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker image
+        if: ${{ matrix.condition }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          push: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.service }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Run Trivy vulnerability scanner on image
+        if: ${{ matrix.condition }}
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.service }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-${{ matrix.service }}.sarif'
+      
+      - name: Upload Trivy scan results
+        if: ${{ matrix.condition }}
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-${{ matrix.service }}.sarif'

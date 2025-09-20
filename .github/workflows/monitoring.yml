@@ -1,0 +1,189 @@
+name: Infrastructure Monitoring
+
+on:
+  schedule:
+    # Check every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+env:
+  GKE_CLUSTER: boutique-cluster
+  GKE_ZONE: us-central1
+  PROJECT_ID: kims-boutique-472014
+
+jobs:
+  # Check deployment health
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v1'
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v1'
+      
+      - name: 'Get GKE credentials'
+        run: gcloud container clusters get-credentials ${{ env.GKE_CLUSTER }} --zone ${{ env.GKE_ZONE }}
+      
+      - name: Check pod status
+        run: |
+          echo "Checking pod health..."
+          kubectl get pods -o wide
+          
+          # Check if any pods are not running
+          NOT_RUNNING=$(kubectl get pods --no-headers | grep -v Running | grep -v Completed | wc -l)
+          if [ "$NOT_RUNNING" -gt 0 ]; then
+            echo "WARNING: $NOT_RUNNING pods are not running"
+            kubectl get pods --no-headers | grep -v Running | grep -v Completed
+            echo "UNHEALTHY_PODS=true" >> $GITHUB_ENV
+          fi
+      
+      - name: Check service endpoints
+        run: |
+          echo "Checking service endpoints..."
+          kubectl get services -o wide
+          
+          # Get external IPs
+          RECOMMENDATION_IP=$(kubectl get service recommendation-agent -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "none")
+          echo "Recommendation Agent IP: $RECOMMENDATION_IP"
+          
+          if [ "$RECOMMENDATION_IP" != "none" ] && [ -n "$RECOMMENDATION_IP" ]; then
+            # Basic connectivity test
+            curl -f --max-time 10 http://$RECOMMENDATION_IP:8080/ || echo "Service endpoint not responding"
+          fi
+      
+      - name: Check resource usage
+        run: |
+          echo "Checking resource usage..."
+          kubectl top nodes || echo "Metrics server not available"
+          kubectl top pods || echo "Pod metrics not available"
+      
+      - name: Create alert issue if unhealthy
+        if: env.UNHEALTHY_PODS == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const title = '🚨 Infrastructure Health Alert';
+            const body = `Unhealthy pods detected in the cluster.
+            
+            **Timestamp:** ${new Date().toISOString()}
+            **Cluster:** ${{ env.GKE_CLUSTER }}
+            **Zone:** ${{ env.GKE_ZONE }}
+            
+            Please check the workflow run for details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            
+            **Action Required:**
+            1. Check pod logs: \`kubectl logs <pod-name>\`
+            2. Describe problematic pods: \`kubectl describe pod <pod-name>\`
+            3. Check resource constraints
+            4. Verify configuration and secrets
+            `;
+            
+            // Check if an alert issue already exists
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['infrastructure-alert', 'critical'],
+              state: 'open'
+            });
+            
+            if (issues.data.length === 0) {
+              // Create new alert issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['infrastructure-alert', 'critical', 'bug']
+              });
+            } else {
+              // Update existing issue
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: `🔄 **Health check update**: Issues persist at ${new Date().toISOString()}\n\nSee latest run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+              });
+            }
+
+  # Performance monitoring
+  performance-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install performance testing tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+      
+      - name: Basic load test
+        run: |
+          # This would be expanded with actual service endpoints
+          echo "Running basic performance checks..."
+          
+          # Example: Check response times
+          # RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}' http://your-service-endpoint/)
+          # echo "Response time: ${RESPONSE_TIME}s"
+          
+          # Placeholder for actual performance tests
+          echo "Performance monitoring configured"
+
+  # Security scanning
+  security-monitoring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'json'
+          output: 'security-scan.json'
+      
+      - name: Process security results
+        run: |
+          if [ -f security-scan.json ]; then
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' security-scan.json 2>/dev/null || echo "0")
+            HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' security-scan.json 2>/dev/null || echo "0")
+            
+            echo "Security scan results:"
+            echo "Critical vulnerabilities: $CRITICAL"
+            echo "High vulnerabilities: $HIGH"
+            
+            if [ "$CRITICAL" -gt 0 ]; then
+              echo "SECURITY_ALERT=true" >> $GITHUB_ENV
+            fi
+          fi
+      
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-monitoring-results
+          path: security-scan.json
+      
+      - name: Create security alert
+        if: env.SECURITY_ALERT == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🔒 Critical Security Vulnerabilities Detected',
+              body: `Critical security vulnerabilities found during scheduled monitoring.
+              
+              **Scan Time:** ${new Date().toISOString()}
+              
+              Please review the security scan artifacts and address critical issues immediately.
+              
+              Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+              labels: ['security', 'critical', 'monitoring']
+            });

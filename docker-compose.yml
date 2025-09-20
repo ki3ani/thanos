@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  frontend-proxy:
+    build:
+      context: ./frontend-proxy
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - TOOLBOX_SERVICE_HOST=mcp-toolbox
+      - TOOLBOX_SERVICE_PORT=8080
+    depends_on:
+      - mcp-toolbox
+    networks:
+      - thanos-network
+
+  recommendation-agent:
+    build:
+      context: ./recommendation-agent  
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8080"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-your-api-key-here}
+    networks:
+      - thanos-network
+
+  mcp-toolbox:
+    build:
+      context: ./mcp-toolbox
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8080"
+    networks:
+      - thanos-network
+
+  # Nginx to serve the UI
+  ui:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+    networks:
+      - thanos-network
+
+networks:
+  thanos-network:
+    driver: bridge
+
+# For development, you can add volumes for hot reloading
+# volumes:
+#   - ./frontend-proxy:/app
+#   - ./recommendation-agent:/app

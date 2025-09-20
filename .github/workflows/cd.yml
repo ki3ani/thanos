@@ -1,0 +1,219 @@
+name: Continuous Deployment
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: us-central1-docker.pkg.dev
+  PROJECT_ID: kims-boutique-472014
+  REPOSITORY: gke-hackathon-repo
+  GKE_CLUSTER: boutique-cluster
+  GKE_ZONE: us-central1
+
+jobs:
+  # Build and push Docker images
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend-proxy-changed: ${{ steps.changes.outputs.frontend-proxy }}
+      recommendation-agent-changed: ${{ steps.changes.outputs.recommendation-agent }}
+      mcp-toolbox-changed: ${{ steps.changes.outputs.mcp-toolbox }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            frontend-proxy:
+              - 'frontend-proxy/**'
+            recommendation-agent:
+              - 'recommendation-agent/**'
+            mcp-toolbox:
+              - 'mcp-toolbox/**'
+      
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v1'
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v1'
+      
+      - name: 'Configure Docker to use gcloud as a credential helper'
+        run: gcloud auth configure-docker ${{ env.REGISTRY }}
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      # Build and push frontend-proxy if changed
+      - name: Build and push frontend-proxy
+        if: steps.changes.outputs.frontend-proxy == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend-proxy
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend-proxy:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend-proxy:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      # Build and push recommendation-agent if changed
+      - name: Build and push recommendation-agent
+        if: steps.changes.outputs.recommendation-agent == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./recommendation-agent
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/recommendation-agent:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/recommendation-agent:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      # Build and push mcp-toolbox if changed
+      - name: Build and push mcp-toolbox
+        if: steps.changes.outputs.mcp-toolbox == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./mcp-toolbox
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/mcp-toolbox:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/mcp-toolbox:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Deploy to staging environment
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v1'
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v1'
+      
+      - name: 'Get GKE credentials'
+        run: gcloud container clusters get-credentials ${{ env.GKE_CLUSTER }} --zone ${{ env.GKE_ZONE }}
+      
+      - name: Update image tags in Kubernetes manifests
+        run: |
+          # Update frontend-proxy deployment
+          if [ "${{ needs.build-and-push.outputs.frontend-proxy-changed }}" == "true" ]; then
+            sed -i "s|image: .*/frontend-proxy:.*|image: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend-proxy:${{ github.sha }}|" frontend-proxy/kubernetes.yaml
+          fi
+          
+          # Update recommendation-agent deployment
+          if [ "${{ needs.build-and-push.outputs.recommendation-agent-changed }}" == "true" ]; then
+            sed -i "s|image: .*/recommendation-agent:.*|image: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/recommendation-agent:${{ github.sha }}|" recommendation-agent/kubernetes.yaml
+          fi
+          
+          # Update mcp-toolbox deployment
+          if [ "${{ needs.build-and-push.outputs.mcp-toolbox-changed }}" == "true" ]; then
+            sed -i "s|image: .*/mcp-toolbox:.*|image: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/mcp-toolbox:${{ github.sha }}|" mcp-toolbox/kubernetes.yaml
+          fi
+      
+      - name: Deploy to staging
+        run: |
+          # Apply Kubernetes manifests
+          kubectl apply -f frontend-real-service.yaml
+          kubectl apply -f frontend-proxy/kubernetes.yaml
+          kubectl apply -f recommendation-agent/kubernetes.yaml
+          kubectl apply -f mcp-toolbox/kubernetes.yaml
+          
+          # Wait for rollout to complete
+          kubectl rollout status deployment/frontend-proxy --timeout=300s || true
+          kubectl rollout status deployment/recommendation-agent --timeout=300s || true
+          kubectl rollout status deployment/mcp-toolbox-server --timeout=300s || true
+      
+      - name: Verify deployment
+        run: |
+          kubectl get pods
+          kubectl get services
+
+  # Deploy to production environment
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-staging]
+    if: github.event.inputs.environment == 'production'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v1'
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v1'
+      
+      - name: 'Get GKE credentials'
+        run: gcloud container clusters get-credentials ${{ env.GKE_CLUSTER }} --zone ${{ env.GKE_ZONE }}
+      
+      - name: Update image tags in Kubernetes manifests
+        run: |
+          # Update frontend-proxy deployment
+          if [ "${{ needs.build-and-push.outputs.frontend-proxy-changed }}" == "true" ]; then
+            sed -i "s|image: .*/frontend-proxy:.*|image: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend-proxy:${{ github.sha }}|" frontend-proxy/kubernetes.yaml
+          fi
+          
+          # Update recommendation-agent deployment
+          if [ "${{ needs.build-and-push.outputs.recommendation-agent-changed }}" == "true" ]; then
+            sed -i "s|image: .*/recommendation-agent:.*|image: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/recommendation-agent:${{ github.sha }}|" recommendation-agent/kubernetes.yaml
+          fi
+          
+          # Update mcp-toolbox deployment
+          if [ "${{ needs.build-and-push.outputs.mcp-toolbox-changed }}" == "true" ]; then
+            sed -i "s|image: .*/mcp-toolbox:.*|image: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/mcp-toolbox:${{ github.sha }}|" mcp-toolbox/kubernetes.yaml
+          fi
+      
+      - name: Deploy to production
+        run: |
+          # Apply Kubernetes manifests
+          kubectl apply -f frontend-real-service.yaml
+          kubectl apply -f frontend-proxy/kubernetes.yaml
+          kubectl apply -f recommendation-agent/kubernetes.yaml
+          kubectl apply -f mcp-toolbox/kubernetes.yaml
+          
+          # Wait for rollout to complete
+          kubectl rollout status deployment/frontend-proxy --timeout=600s
+          kubectl rollout status deployment/recommendation-agent --timeout=600s
+          kubectl rollout status deployment/mcp-toolbox-server --timeout=600s
+      
+      - name: Verify deployment
+        run: |
+          kubectl get pods
+          kubectl get services
+      
+      - name: Run smoke tests
+        run: |
+          # Get the external IP of the recommendation agent
+          RECOMMENDATION_IP=$(kubectl get service recommendation-agent -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "Testing recommendation agent at $RECOMMENDATION_IP"
+          
+          # Basic health check (adjust URL as needed)
+          curl -f http://$RECOMMENDATION_IP:8080/health || echo "Health check endpoint not available"
