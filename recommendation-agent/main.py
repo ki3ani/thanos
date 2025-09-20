@@ -10,7 +10,7 @@ import pb.demo_pb2_grpc as demo_pb2_grpc
 try:
     api_key = os.environ["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel("gemini-1.5-flash")
 except KeyError:
     raise RuntimeError("GEMINI_API_KEY environment variable not set.")
 
@@ -27,6 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.on_event("startup")
 def sync_product_catalog():
     """On startup, make a gRPC call to the productcatalogservice to get all products."""
@@ -35,10 +36,10 @@ def sync_product_catalog():
         channel = grpc.insecure_channel(PRODUCT_CATALOG_SERVICE_ADDR)
         stub = demo_pb2_grpc.ProductCatalogServiceStub(channel)
         response = stub.ListProducts(demo_pb2.Empty())
-        
+
         global VALID_PRODUCT_NAMES
         VALID_PRODUCT_NAMES = [p.name for p in response.products]
-        
+
         if VALID_PRODUCT_NAMES:
             print(f"Successfully synced {len(VALID_PRODUCT_NAMES)} products.")
         else:
@@ -46,9 +47,11 @@ def sync_product_catalog():
     except Exception as e:
         print(f"FATAL: Could not sync product catalog on startup: {e}")
 
+
 class RecommendRequest(BaseModel):
     session_id: str
     viewed_products: list[str]
+
 
 def get_product_from_catalog(product_name: str) -> dict:
     """Makes a gRPC call to the productcatalogservice to search for a product."""
@@ -60,7 +63,7 @@ def get_product_from_catalog(product_name: str) -> dict:
 
         if not response.results:
             return None
-            
+
         product = response.results[0]
         return {
             "id": product.id,
@@ -70,32 +73,41 @@ def get_product_from_catalog(product_name: str) -> dict:
             "priceUsd": {
                 "currencyCode": product.price_usd.currency_code,
                 "units": product.price_usd.units,
-                "nanos": product.price_usd.nanos
-            }
+                "nanos": product.price_usd.nanos,
+            },
         }
     except Exception as e:
         print(f"Error calling product catalog service: {e}")
         return None
+
 
 @app.get("/health", status_code=200)
 def health_check():
     """Simple health check endpoint."""
     return {"status": "ok", "message": "Recommendation agent is healthy"}
 
+
 @app.post("/recommend")
 def get_recommendation(request: RecommendRequest):
-    """Receives user context, gets a recommendation from Gemini, and fetches its details."""
+    """Receives user context, gets a recommendation from Gemini,
+    and fetches its details."""
     if not request.viewed_products:
-        raise HTTPException(status_code=400, detail="Viewed products list cannot be empty.")
+        raise HTTPException(
+            status_code=400, detail="Viewed products list cannot be empty."
+        )
     if not VALID_PRODUCT_NAMES:
-        raise HTTPException(status_code=503, detail="Product catalog not available. Please try again later.")
+        raise HTTPException(
+            status_code=503,
+            detail="Product catalog not available. Please try again later.",
+        )
 
     product_list_str = ", ".join(request.viewed_products)
     valid_names_str = ", ".join(VALID_PRODUCT_NAMES)
     prompt = (
         "You are an expert e-commerce sales assistant. "
         f"A customer is interested in the following items: [{product_list_str}]. "
-        f"From the following list of available products, recommend one single complementary product: [{valid_names_str}]. "
+        f"From the following list of available products, "
+        f"recommend one single complementary product: [{valid_names_str}]. "
         "Return only the exact name of the product from the list, and nothing else."
     )
     try:
@@ -104,10 +116,13 @@ def get_recommendation(request: RecommendRequest):
         product_details = get_product_from_catalog(recommended_product_name)
 
         if not product_details:
-             raise HTTPException(status_code=404, detail=f"Recommended product '{recommended_product_name}' not found in catalog.")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Recommended product '{recommended_product_name}' "
+                f"not found in catalog.",
+            )
 
         return {"recommended_product": product_details}
     except Exception as e:
         print(f"An error occurred: {e}")
         raise HTTPException(status_code=500, detail="Failed to get recommendation.")
-

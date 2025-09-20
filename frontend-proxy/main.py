@@ -5,9 +5,13 @@ import os
 from urllib.parse import parse_qs
 
 REAL_FRONTEND_URL = "http://frontend-real:8080"
-TOOLBOX_URL = f"http://{os.getenv('TOOLBOX_SERVICE_HOST', 'mcp-toolbox-service')}:{os.getenv('TOOLBOX_SERVICE_PORT', '8080')}"
+TOOLBOX_URL = (
+    f"http://{os.getenv('TOOLBOX_SERVICE_HOST', 'mcp-toolbox-service')}:"
+    f"{os.getenv('TOOLBOX_SERVICE_PORT', '8080')}"
+)
 
 app = FastAPI()
+
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_request(request: Request, path: str):
@@ -17,10 +21,10 @@ async def proxy_request(request: Request, path: str):
     """
     body = await request.body()
     target_url = f"{REAL_FRONTEND_URL}/{path}"
-    
+
     if request.method == "POST" and path == "cart":
         print("Intercepted an 'AddItemToCart' request...")
-        
+
         try:
             form_data = parse_qs(body.decode())
             product_id = form_data.get("product_id", [None])[0]
@@ -31,22 +35,29 @@ async def proxy_request(request: Request, path: str):
                 event = {
                     "topic": "user-activity",
                     "event": "item_added_to_cart",
-                    "data": { "user_id": user_id, "product_id": product_id, "quantity": quantity }
+                    "data": {
+                        "user_id": user_id,
+                        "product_id": product_id,
+                        "quantity": quantity,
+                    },
                 }
                 requests.post(f"{TOOLBOX_URL}/mcp", json=event, timeout=1)
                 print(f"Successfully published event for product: {product_id}")
 
         except Exception as e:
             print(f"ERROR: Could not process form data or publish event: {e}")
-    
+
     resp = requests.request(
         method=request.method,
         url=target_url,
-        headers={key: value for (key, value) in request.headers.items() if key != 'host'},
+        headers={
+            key: value for (key, value) in request.headers.items() if key != "host"
+        },
         data=body,
         cookies=request.cookies,
-        allow_redirects=False
+        allow_redirects=False,
     )
-    
-    return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
 
+    return Response(
+        content=resp.content, status_code=resp.status_code, headers=dict(resp.headers)
+    )
