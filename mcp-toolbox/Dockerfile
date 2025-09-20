@@ -1,5 +1,5 @@
 # Use a minimal, non-root base image for security
-FROM gcr.io/distroless/static-debian11
+FROM gcr.io/distroless/static-debian11:debug
 
 # Set the working directory
 WORKDIR /app
