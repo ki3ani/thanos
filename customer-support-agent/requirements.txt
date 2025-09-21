@@ -1,3 +1,4 @@
 Flask
 google-generativeai
-psycopg2-binary
+grpcio
+grpcio-tools

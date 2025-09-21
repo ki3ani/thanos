@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-support-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: customer-support-agent
+  ports:
+  - port: 80
+    targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-support-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: customer-support-agent
+  template:
+    metadata:
+      labels:
+        app: customer-support-agent
+    spec:
+      containers:
+      - name: support-agent
+        image: us-central1-docker.pkg.dev/kims-boutique-472014/gke-hackathon-repo/customer-support-agent:v2
+        ports:
+        - containerPort: 8080
+        env:
+          - name: GOOGLE_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: gemini-api-key
+                key: key

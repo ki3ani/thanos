@@ -25,9 +25,11 @@ spec:
       labels:
         app: marketing-campaigner-agent
     spec:
+      serviceAccountName: mcp-toolbox-sa
+      # ------------------------------------
       containers:
       - name: marketer
-        image: us-central1-docker.pkg.dev/kims-boutique-472014/gke-hackathon-repo/marketing-campaigner-agent:v1
+        image: us-central1-docker.pkg.dev/kims-boutique-472014/gke-hackathon-repo/marketing-campaigner-agent:v5
         ports:
         - containerPort: 8080
         env:
@@ -36,3 +38,25 @@ spec:
               secretKeyRef:
                 name: gemini-api-key
                 key: key
+          - name: DB_HOST
+            value: "127.0.0.1"
+          - name: DB_NAME
+            value: "postgres"
+          - name: DB_USER
+            valueFrom:
+              secretKeyRef:
+                name: boutique-db-credentials
+                key: user
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: boutique-db-credentials
+                key: password
+
+      - name: cloud-sql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.8.0
+        args:
+          - "--structured-logs"
+          - "kims-boutique-472014:us-central1:boutique-db-instance"
+        securityContext:
+          runAsNonRoot: true

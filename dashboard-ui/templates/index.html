@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GKE Agents - Live Dashboard</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f9; color: #333; margin: 2em; }
+        .container { max-width: 1800px; margin: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 2em; }
+        .card { background: white; border-radius: 12px; padding: 1.5em; box-shadow: 0 6px 10px rgba(0,0,0,0.08); }
+        h1, h2 { color: #4285F4; border-bottom: 2px solid #eee; padding-bottom: 0.5em;}
+        #ad_copy { font-style: italic; font-size: 1.5em; font-weight: bold; color: #DB4437; text-align: center; border: 2px dashed #DB4437; padding: 1em; margin-top: 1em; border-radius: 8px;}
+        ul { list-style-type: none; padding: 0; max-height: 300px; overflow-y: auto;}
+        li { background: #f9f9f9; border: 1px solid #ddd; padding: 0.75em; margin-bottom: 0.5em; border-radius: 4px; }
+        .timestamp { font-size: 0.8em; color: #666; float: right; }
+        strong { color: #1a73e8; }
+    </style>
+</head>
+<body>
+    <h1>🤖 GKE AI Agents - Live Mission Control</h1>
+    <div class="container">
+        <div class="card">
+            <h2>📢 Live Ad Campaign</h2>
+            <p><strong>Promoted Product:</strong> <span id="product_name">Loading...</span></p>
+            <div id="ad_copy">Loading...</div>
+        </div>
+        <div class="card">
+            <h2>🧠 Live AI Recommendations</h2>
+            <p><strong>Input (User Cart):</strong> <span id="rec_in">Loading...</span></p>
+            <p><strong>Output (AI Suggestion):</strong> <span id="rec_out">Loading...</span></p>
+        </div>
+        <div class="card">
+            <h2>🛒 Live Event Stream (Add to Cart)</h2>
+            <ul id="event_list"><li>Loading...</li></ul>
+        </div>
+    </div>
+    <script>
+        async function fetchData() {
+            try {
+                const response = await fetch('/data');
+                const data = await response.json();
+
+                // Update Ad Campaign
+                document.getElementById('product_name').textContent = data.latest_ad.product_name;
+                document.getElementById('ad_copy').textContent = `"${data.latest_ad.ad_copy}"`;
+
+                // --- THIS IS THE CORRECTED LINE ---
+                // It now correctly reads "input_cart_names"
+                document.getElementById('rec_in').textContent = data.latest_rec.input_cart_names.join(', ') || 'Empty';
+                document.getElementById('rec_out').textContent = data.latest_rec.output_product_names.join(', ');
+
+                // Update Event Stream
+                const eventList = document.getElementById('event_list');
+                eventList.innerHTML = '';
+                data.mcp_context.forEach(event => {
+                    const li = document.createElement('li');
+                    const eventTime = new Date(event.created_at).toLocaleTimeString();
+                    li.innerHTML = `<strong>${event.product_name || 'Unknown'}</strong> added <span class="timestamp">${eventTime}</span>`;
+                    eventList.appendChild(li);
+                });
+            } catch (error) { console.error('Failed to fetch data:', error); }
+        }
+        setInterval(fetchData, 3000);
+        fetchData();
+    </script>
+</body>
+</html>

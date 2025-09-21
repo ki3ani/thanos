@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Customer Support Agent</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 2em auto; background: #f9f9f9; }
+        #chatbox { height: 400px; border: 1px solid #ccc; overflow-y: scroll; padding: 1em; background: white; border-radius: 8px; margin-bottom: 1em; }
+        .user { text-align: right; color: #4285F4; margin: 0.5em 0; }
+        .agent { text-align: left; color: #0F9D58; margin: 0.5em 0; }
+        input { width: 80%; padding: 0.5em; border-radius: 4px; border: 1px solid #ccc;}
+        button { padding: 0.5em; border-radius: 4px; border: none; background: #4285F4; color: white; cursor: pointer;}
+    </style>
+</head>
+<body>
+    <h1>🤖 AI Customer Support Agent</h1>
+    <div id="chatbox"><div>Ask a question about a product! (e.g., "tell me about the Vintage Camera")</div></div>
+    <form id="chat-form">
+        <input type="text" id="question" placeholder="Type your question here..." autocomplete="off">
+        <button type="submit">Ask Agent</button>
+    </form>
+    <script>
+        const form = document.getElementById('chat-form');
+        const chatbox = document.getElementById('chatbox');
+        
+        const sessionId = 'session-' + Math.random().toString(36).substr(2, 9);
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const questionInput = document.getElementById('question');
+            const question = questionInput.value;
+            if (!question) return;
+
+            chatbox.innerHTML += `<div class="user"><b>You:</b> ${question}</div>`;
+            questionInput.value = 'Thinking...';
+            questionInput.disabled = true;
+
+            const response = await fetch('/ask', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    question: question,
+                    session_id: sessionId 
+                })
+            });
+            const data = await response.json();
+            
+            chatbox.innerHTML += `<div class="agent"><b>Agent:</b> ${data.answer}</div>`;
+            chatbox.scrollTop = chatbox.scrollHeight;
+            questionInput.value = '';
+            questionInput.disabled = false;
+        });
+    </script>
+</body>
+</html>
