@@ -30,7 +30,7 @@ spec:
     spec:
       containers:
       - name: server
-        image: us-central1-docker.pkg.dev/kims-boutique-472014/gke-hackathon-repo/frontend-proxy:v5
+        image: us-central1-docker.pkg.dev/kims-boutique-472014/gke-hackathon-repo/frontend-proxy:v9
         ports:
         - containerPort: 8080
         env:
