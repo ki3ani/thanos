@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: business-analyst-agent
+spec:
+  # This schedule means "run every 5 minutes".
+  # For a daily report, you could use "0 9 * * *" to run at 9 AM every day.
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: business-analyst
+            image: us-central1-docker.pkg.dev/kims-boutique-472014/gke-hackathon-repo/business-analyst-agent:v1
+            env:
+              - name: GOOGLE_API_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: gemini-api-key
+                    key: key
+              - name: MCP_SERVER_URL
+                value: "http://mcp-toolbox-service:8080/context"
+              - name: MARKETING_AGENT_URL
+                value: "http://marketing-campaigner-service:8080/goal"
+          restartPolicy: OnFailure
