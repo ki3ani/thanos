@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: marketing-campaigner-service
+spec:
+  type: ClusterIP
+  selector:
+    app: marketing-campaigner-agent
+  ports:
+  - port: 8080
+    targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marketing-campaigner-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: marketing-campaigner-agent
+  template:
+    metadata:
+      labels:
+        app: marketing-campaigner-agent
+    spec:
+      containers:
+      - name: marketer
+        image: us-central1-docker.pkg.dev/kims-boutique-472014/gke-hackathon-repo/marketing-campaigner-agent:v1
+        ports:
+        - containerPort: 8080
+        env:
+          - name: GOOGLE_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: gemini-api-key
+                key: key
